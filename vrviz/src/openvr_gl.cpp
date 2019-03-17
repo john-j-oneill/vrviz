@@ -7,8 +7,8 @@
 CMainApplication::CMainApplication( int argc, char *argv[] )
 	: m_pCompanionWindow(NULL)
 	, m_pContext(NULL)
-	, m_nCompanionWindowWidth( 1280 )
-	, m_nCompanionWindowHeight( 720 )
+	, m_nCompanionWindowWidth( 1920 )
+	, m_nCompanionWindowHeight( 1080 )
 	, m_unSceneProgramID( 0 )
 	, m_unCompanionWindowProgramID( 0 )
 	, m_unControllerTransformProgramID( 0 )
@@ -185,7 +185,7 @@ bool CMainApplication::BInit()
  	m_fScale = 0.3f;
  	m_fScaleSpacing = 4.0f;
  
- 	m_fNearClip = 0.1f;
+    m_fNearClip = 0.001f;
  	m_fFarClip = 30.0f;
  
  	m_iTexture = 0;
@@ -356,6 +356,12 @@ void CMainApplication::Shutdown()
 		glDeleteFramebuffers( 1, &rightEyeDesc.m_nRenderFramebufferId );
 		glDeleteTextures( 1, &rightEyeDesc.m_nResolveTextureId );
 		glDeleteFramebuffers( 1, &rightEyeDesc.m_nResolveFramebufferId );
+
+        glDeleteRenderbuffers( 1, &camEyeDesc.m_nDepthBufferId );
+        glDeleteTextures( 1, &camEyeDesc.m_nRenderTextureId );
+        glDeleteFramebuffers( 1, &camEyeDesc.m_nRenderFramebufferId );
+        glDeleteTextures( 1, &camEyeDesc.m_nResolveTextureId );
+        glDeleteFramebuffers( 1, &camEyeDesc.m_nResolveFramebufferId );
 
 		if( m_unCompanionWindowVAO != 0 )
 		{
@@ -554,9 +560,16 @@ void CMainApplication::RenderFrame()
 		RenderCompanionWindow();
 
 		vr::Texture_t leftEyeTexture = {(void*)(uintptr_t)leftEyeDesc.m_nResolveTextureId, vr::TextureType_OpenGL, vr::ColorSpace_Gamma };
-		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture );
+        vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture );
 		vr::Texture_t rightEyeTexture = {(void*)(uintptr_t)rightEyeDesc.m_nResolveTextureId, vr::TextureType_OpenGL, vr::ColorSpace_Gamma };
-		vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture );
+        vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture );
+        vr::Texture_t camEyeTexture = {(void*)(uintptr_t)camEyeDesc.m_nResolveTextureId, vr::TextureType_OpenGL, vr::ColorSpace_Gamma };
+        vr::VROverlay()->SetOverlayTexture(m_ulOverlayHandle, &camEyeTexture );
+        Matrix4 monitor_loc=GetRobotMatrixPose("anestibot_monitor");
+        OverlayTransform=ConvertMatrix4ToSteamVRMatrix(monitor_loc);
+        vr::VROverlay()->SetOverlayTransformAbsolute(m_ulOverlayHandle, vr::TrackingUniverseStanding, &OverlayTransform);
+
+        vr::VROverlay()->ShowOverlay(m_ulOverlayHandle);
 	}
 
 	if ( m_bVblank && m_bGlFinishHack )
@@ -1421,10 +1434,10 @@ void CMainApplication::RenderControllerAxes()
 //-----------------------------------------------------------------------------
 void CMainApplication::SetupCameras()
 {
-	m_mat4ProjectionLeft = GetHMDMatrixProjectionEye( vr::Eye_Left );
-	m_mat4ProjectionRight = GetHMDMatrixProjectionEye( vr::Eye_Right );
-	m_mat4eyePosLeft = GetHMDMatrixPoseEye( vr::Eye_Left );
-	m_mat4eyePosRight = GetHMDMatrixPoseEye( vr::Eye_Right );
+    m_mat4ProjectionLeft = GetHMDMatrixProjectionEye( Eye_Left );
+    m_mat4ProjectionRight = GetHMDMatrixProjectionEye( Eye_Right );
+    m_mat4eyePosLeft = GetHMDMatrixPoseEye( Eye_Left );
+    m_mat4eyePosRight = GetHMDMatrixPoseEye( Eye_Right );
 }
 
 
@@ -1482,6 +1495,7 @@ bool CMainApplication::SetupStereoRenderTargets()
 
 	CreateFrameBuffer( m_nRenderWidth, m_nRenderHeight, leftEyeDesc );
 	CreateFrameBuffer( m_nRenderWidth, m_nRenderHeight, rightEyeDesc );
+    CreateFrameBuffer( 640, 480, camEyeDesc );
 	
 	return true;
 }
@@ -1550,7 +1564,7 @@ void CMainApplication::RenderStereoTargets()
 	// Left Eye
 	glBindFramebuffer( GL_FRAMEBUFFER, leftEyeDesc.m_nRenderFramebufferId );
  	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
- 	RenderScene( vr::Eye_Left );
+    RenderScene( Eye_Left );
  	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
 	
 	glDisable( GL_MULTISAMPLE );
@@ -1570,7 +1584,7 @@ void CMainApplication::RenderStereoTargets()
 	// Right Eye
 	glBindFramebuffer( GL_FRAMEBUFFER, rightEyeDesc.m_nRenderFramebufferId );
  	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
- 	RenderScene( vr::Eye_Right );
+    RenderScene( Eye_Right );
  	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
  	
 	glDisable( GL_MULTISAMPLE );
@@ -1584,13 +1598,31 @@ void CMainApplication::RenderStereoTargets()
 
  	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0 );
+
+    // Cam Eye
+    glBindFramebuffer( GL_FRAMEBUFFER, camEyeDesc.m_nRenderFramebufferId );
+    glViewport(0, 0, 640, 480 );
+    RenderScene( Eye_Cam );
+    glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+
+    glDisable( GL_MULTISAMPLE );
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, camEyeDesc.m_nRenderFramebufferId );
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, camEyeDesc.m_nResolveFramebufferId );
+
+    glBlitFramebuffer( 0, 0, 640, 480, 0, 0, 640, 480,
+        GL_COLOR_BUFFER_BIT,
+        GL_LINEAR  );
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0 );
 }
 
 
 //-----------------------------------------------------------------------------
 // Purpose: Renders a scene with respect to nEye.
 //-----------------------------------------------------------------------------
-void CMainApplication::RenderScene( vr::Hmd_Eye nEye )
+void CMainApplication::RenderScene( VRVIZEye nEye )
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	glEnable(GL_DEPTH_TEST);
@@ -1753,6 +1785,16 @@ void CMainApplication::RenderCompanionWindow()
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 	glDrawElements( GL_TRIANGLES, m_uiCompanionWindowIndexSize/2, GL_UNSIGNED_SHORT, (const void *)(uintptr_t)(m_uiCompanionWindowIndexSize) );
 
+    // render cam eye
+    glBindTexture(GL_TEXTURE_2D, camEyeDesc.m_nResolveTextureId  );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+    glDrawElements( GL_TRIANGLES, m_uiCompanionWindowIndexSize/2, GL_UNSIGNED_SHORT, (const void *)(uintptr_t)(m_uiCompanionWindowIndexSize) );
+
+    //vr::VROverlay()->SetOverlayTexture( m_ulOverlayHandle, &texture );
+
 	glBindVertexArray( 0 );
 	glUseProgram( 0 );
 }
@@ -1761,12 +1803,12 @@ void CMainApplication::RenderCompanionWindow()
 //-----------------------------------------------------------------------------
 // Purpose: Gets a Matrix Projection Eye with respect to nEye.
 //-----------------------------------------------------------------------------
-Matrix4 CMainApplication::GetHMDMatrixProjectionEye( vr::Hmd_Eye nEye )
+Matrix4 CMainApplication::GetHMDMatrixProjectionEye( VRVIZEye nEye )
 {
 	if ( !m_pHMD )
 		return Matrix4();
 
-	vr::HmdMatrix44_t mat = m_pHMD->GetProjectionMatrix( nEye, m_fNearClip, m_fFarClip );
+    vr::HmdMatrix44_t mat = m_pHMD->GetProjectionMatrix( vr::EVREye(nEye), m_fNearClip, m_fFarClip );
 
 	return Matrix4(
 		mat.m[0][0], mat.m[1][0], mat.m[2][0], mat.m[3][0],
@@ -1780,12 +1822,12 @@ Matrix4 CMainApplication::GetHMDMatrixProjectionEye( vr::Hmd_Eye nEye )
 //-----------------------------------------------------------------------------
 // Purpose: Gets an HMDMatrixPoseEye with respect to nEye.
 //-----------------------------------------------------------------------------
-Matrix4 CMainApplication::GetHMDMatrixPoseEye( vr::Hmd_Eye nEye )
+Matrix4 CMainApplication::GetHMDMatrixPoseEye( VRVIZEye nEye )
 {
 	if ( !m_pHMD )
 		return Matrix4();
 
-	vr::HmdMatrix34_t matEyeRight = m_pHMD->GetEyeToHeadTransform( nEye );
+    vr::HmdMatrix34_t matEyeRight = m_pHMD->GetEyeToHeadTransform( vr::EVREye(nEye) );
 	Matrix4 matrixObj(
 		matEyeRight.m[0][0], matEyeRight.m[1][0], matEyeRight.m[2][0], 0.0, 
 		matEyeRight.m[0][1], matEyeRight.m[1][1], matEyeRight.m[2][1], 0.0,
@@ -1810,17 +1852,20 @@ Matrix4 CMainApplication::GetRobotMatrixPose( std::string frame_name )
 // Purpose: Gets a Current View Projection Matrix with respect to nEye,
 //          which may be an Eye_Left or an Eye_Right.
 //-----------------------------------------------------------------------------
-Matrix4 CMainApplication::GetCurrentViewProjectionMatrix( vr::Hmd_Eye nEye )
+Matrix4 CMainApplication::GetCurrentViewProjectionMatrix( VRVIZEye nEye )
 {
 	Matrix4 matMVP;
-	if( nEye == vr::Eye_Left )
+    if( nEye == Eye_Left )
 	{
 		matMVP = m_mat4ProjectionLeft * m_mat4eyePosLeft * m_mat4HMDPose;
 	}
-	else if( nEye == vr::Eye_Right )
+    else if( nEye == Eye_Right )
 	{
 		matMVP = m_mat4ProjectionRight * m_mat4eyePosRight *  m_mat4HMDPose;
-	}
+    }else if( nEye == Eye_Cam )
+    {
+        matMVP = m_mat4ProjectionRight * (GetRobotMatrixPose("anestibot_cam").invert());
+    }
 
 	return matMVP;
 }
@@ -1950,6 +1995,31 @@ Matrix4 CMainApplication::ConvertSteamVRMatrixToMatrix4( const vr::HmdMatrix34_t
 		matPose.m[0][3], matPose.m[1][3], matPose.m[2][3], 1.0f
 		);
 	return matrixObj;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Converts a SteamVR matrix to our local matrix class
+//-----------------------------------------------------------------------------
+vr::HmdMatrix34_t CMainApplication::ConvertMatrix4ToSteamVRMatrix( const Matrix4 &matPose )
+{
+    vr::HmdMatrix34_t matrixObj;
+    matrixObj.m[0][0]=matPose.get()[0];
+    matrixObj.m[1][0]=matPose.get()[1];
+    matrixObj.m[2][0]=matPose.get()[2];
+    //                              3
+    matrixObj.m[0][1]=matPose.get()[4];
+    matrixObj.m[1][1]=matPose.get()[5];
+    matrixObj.m[2][1]=matPose.get()[6];
+    //                              7
+    matrixObj.m[0][2]=matPose.get()[8];
+    matrixObj.m[1][2]=matPose.get()[9];
+    matrixObj.m[2][2]=matPose.get()[10];
+    //                              11
+    matrixObj.m[0][3]=matPose.get()[12];
+    matrixObj.m[1][3]=matPose.get()[13];
+    matrixObj.m[2][3]=matPose.get()[14];
+    //                              15
+    return matrixObj;
 }
 
 

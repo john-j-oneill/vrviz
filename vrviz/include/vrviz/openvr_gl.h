@@ -47,6 +47,13 @@ void inline ThreadSleep( unsigned long nMilliseconds )
 #endif
 }
 
+enum VRVIZEye
+{
+    Eye_Left = 0,
+    Eye_Right = 1,
+    Eye_Cam = 2
+};
+
 class CGLRenderModel
 {
 public:
@@ -105,15 +112,16 @@ public:
 
 	void RenderStereoTargets();
 	void RenderCompanionWindow();
-	void RenderScene( vr::Hmd_Eye nEye );
+    void RenderScene( VRVIZEye nEye );
 
-	Matrix4 GetHMDMatrixProjectionEye( vr::Hmd_Eye nEye );
-	Matrix4 GetHMDMatrixPoseEye( vr::Hmd_Eye nEye );
+    Matrix4 GetHMDMatrixProjectionEye( VRVIZEye nEye );
+    Matrix4 GetHMDMatrixPoseEye( VRVIZEye nEye );
 	virtual Matrix4 GetRobotMatrixPose( std::string frame_name );
-	Matrix4 GetCurrentViewProjectionMatrix( vr::Hmd_Eye nEye );
+    Matrix4 GetCurrentViewProjectionMatrix( VRVIZEye nEye );
 	virtual void UpdateHMDMatrixPose();
 
-	Matrix4 ConvertSteamVRMatrixToMatrix4( const vr::HmdMatrix34_t &matPose );
+    Matrix4 ConvertSteamVRMatrixToMatrix4( const vr::HmdMatrix34_t &matPose );
+    vr::HmdMatrix34_t ConvertMatrix4ToSteamVRMatrix( const Matrix4 &matPose );
 
 	GLuint CompileGLShader( const char *pchShaderName, const char *pchVertexShader, const char *pchFragmentShader );
 	bool CreateAllShaders();
@@ -190,8 +198,9 @@ protected:
 	unsigned int m_uiVertcount;
 
 	GLuint m_glSceneVertBuffer;
-	GLuint m_unSceneVAO;
-	GLuint m_unCompanionWindowVAO;
+    GLuint m_unSceneVAO;
+    GLuint m_unCompanionWindowVAO;
+    GLuint m_unCameraVAO;
 	GLuint m_glCompanionWindowIDVertBuffer;
 	GLuint m_glCompanionWindowIDIndexBuffer;
 	unsigned int m_uiCompanionWindowIndexSize;
@@ -209,8 +218,9 @@ protected:
 	unsigned int m_uiColorTrisVertcount;
 
 	Matrix4 m_mat4HMDPose;
-	Matrix4 m_mat4eyePosLeft;
-	Matrix4 m_mat4eyePosRight;
+    Matrix4 m_mat4eyePosLeft;
+    Matrix4 m_mat4eyePosRight;
+    Matrix4 m_mat4eyePosCam;
 	vr::HmdMatrix34_t OverlayTransform;
 
 	Matrix4 m_mat4ProjectionCenter;
@@ -303,8 +313,9 @@ protected:
 		GLuint m_nResolveTextureId;
 		GLuint m_nResolveFramebufferId;
 	};
-	FramebufferDesc leftEyeDesc;
-	FramebufferDesc rightEyeDesc;
+    FramebufferDesc leftEyeDesc;
+    FramebufferDesc rightEyeDesc;
+    FramebufferDesc camEyeDesc;
 
 	vr::VROverlayHandle_t m_ulOverlayHandle;
 

@@ -81,7 +81,16 @@ volatile bool scene_update_needed=true;
 #ifdef USE_VULKAN
 #else
 /// Variables for rendering image to overlay
-GLuint textureFromImage;
+GLuint textureFromImage = 0;
+cv::Mat image_from_msg;
+
+/// Variables for rendering extra camera
+GLuint FramebufferName = 0;
+// The texture we're going to render to
+GLuint renderedTexture;
+// The depth buffer
+GLuint depthrenderbuffer;
+
 #endif
 cv_bridge::CvImagePtr cv_ptr_raw;
 bool received_image=false;
@@ -181,11 +190,43 @@ private:
             OverlayTransform.m[2][0]=0.0;
             OverlayTransform.m[2][1]=0.0;
             OverlayTransform.m[2][2]=1.0;
-            vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(m_ulOverlayHandle, vr::k_unTrackedDeviceIndex_Hmd, &OverlayTransform);
+            //vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(m_ulOverlayHandle, vr::k_unTrackedDeviceIndex_Hmd, &OverlayTransform);
+            vr::VROverlay()->SetOverlayTransformAbsolute(m_ulOverlayHandle, vr::TrackingUniverseStanding, &OverlayTransform);
             vr::VROverlay()->SetOverlayInputMethod( m_ulOverlayHandle, vr::VROverlayInputMethod_Mouse );
         }else{
             ROS_ERROR("Failed to setup VR Overlay");
         }
+
+        glGenFramebuffers(1, &FramebufferName);
+        glBindFramebuffer(GL_FRAMEBUFFER, FramebufferName);
+
+        glGenTextures(1, &renderedTexture);
+
+        // "Bind" the newly created texture : all future texture functions will modify this texture
+        glBindTexture(GL_TEXTURE_2D, renderedTexture);
+
+        // Give an empty image to OpenGL ( the last "0" )
+        glTexImage2D(GL_TEXTURE_2D, 0,GL_RGB, 1024, 768, 0,GL_RGB, GL_UNSIGNED_BYTE, 0);
+
+        // Poor filtering. Needed !
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+        // Depth buffer
+        glGenRenderbuffers(1, &depthrenderbuffer);
+        glBindRenderbuffer(GL_RENDERBUFFER, depthrenderbuffer);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, 1024, 768);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthrenderbuffer);
+
+        // Set "renderedTexture" as our colour attachement #0
+        glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, renderedTexture, 0);
+
+        // Set the list of draw buffers.
+        GLenum DrawBuffers[1] = {GL_COLOR_ATTACHMENT0};
+        glDrawBuffers(1, DrawBuffers); // "1" is the size of DrawBuffers
+
+        // Always check that our framebuffer is ok
+        bSuccess = bSuccess && (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
 
         return bSuccess;
     }
@@ -336,9 +377,11 @@ private:
 #ifdef USE_VULKAN
             /// \todo Bind texture
 #else
+
+            BindCVMat2GLTexture(image_from_msg,textureFromImage);
             // Bind texture
             vr::Texture_t texture = {(void*)(uintptr_t)textureFromImage, vr::TextureType_OpenGL, vr::ColorSpace_Auto };
-            vr::VROverlay()->SetOverlayTexture( m_ulOverlayHandle, &texture );
+            //vr::VROverlay()->SetOverlayTexture( m_ulOverlayHandle, &texture );
             vr::VROverlay()->ShowOverlay(m_ulOverlayHandle);
 #endif
         }else{
@@ -931,6 +974,59 @@ private:
         return trans.transform;
     }
 
+    /*!
+     * \brief Convert an OpenCV image mat to OpenGL
+     *
+     * \note This was adapted from https://stackoverflow.com/a/16815662 and may not be optimal
+     *
+     * \param image
+     * \param imageTexture
+     */
+    void BindCVMat2GLTexture(cv::Mat& image, GLuint& imageTexture)
+    {
+       if(image.empty()){
+          std::cout << "image empty" << std::endl;
+      }else{
+          //glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+          glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+          if(imageTexture==0){
+              /// This allocates memory for the texture, so we do it the first time
+              /// If the image you are subscribing to changes resolution THINGS WILL BREAK
+              glGenTextures(1, &imageTexture);
+          }
+          glBindTexture(GL_TEXTURE_2D, imageTexture);
+
+          cv::cvtColor(image, image, CV_BGR2RGB);
+          cv::Mat image_flipped;
+          cv::flip(image, image_flipped, 0);
+
+          glTexImage2D(GL_TEXTURE_2D,         // Type of texture
+                            0,                   // Pyramid level (for mip-mapping) - 0 is the top level
+                GL_RGBA,              // Internal colour format to convert to
+                            image_flipped.cols,          // Image width  i.e. 640 for Kinect in standard mode
+                            image_flipped.rows,          // Image height i.e. 480 for Kinect in standard mode
+                            0,                   // Border width in pixels (can either be 1 or 0)
+                GL_RGB,              // Input image format (i.e. GL_RGB, GL_RGBA, GL_BGR etc.)
+                GL_UNSIGNED_BYTE,    // Image data type
+                image_flipped.ptr());        // The actual image data itself
+
+
+          // If this renders black ask McJohn what's wrong.
+          glGenerateMipmap(GL_TEXTURE_2D);
+
+          glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+          glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+          glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+          glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
+
+          GLfloat fLargest;
+          glGetFloatv( GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &fLargest );
+          glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, fLargest );
+
+          glBindTexture( GL_TEXTURE_2D, 0 );
+        }
+    }
+
 };
 
 
@@ -1121,64 +1217,6 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& cloud_in)
     scene_update_needed=true;
 }
 
-#ifdef USE_VULKAN
-
-/// \todo Convert texture
-
-#else
-/*!
- * \brief Convert an OpenCV image mat to OpenGL
- *
- * \note This was adapted from https://stackoverflow.com/a/16815662 and may not be optimal
- *
- * \param image
- * \param imageTexture
- */
-void BindCVMat2GLTexture(cv::Mat& image, GLuint& imageTexture)
-{
-   if(image.empty()){
-      std::cout << "image empty" << std::endl;
-  }else{
-      //glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-      glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-      if(!received_image){
-          /// This allocates memory for the texture, so we do it the first time
-          /// If the image you are subscribing to changes resolution THINGS WILL BREAK
-          glGenTextures(1, &imageTexture);
-      }
-      glBindTexture(GL_TEXTURE_2D, imageTexture);
-
-      cv::cvtColor(image, image, CV_BGR2RGB);
-      cv::Mat image_flipped;
-      cv::flip(image, image_flipped, 0);
-
-      glTexImage2D(GL_TEXTURE_2D,         // Type of texture
-                        0,                   // Pyramid level (for mip-mapping) - 0 is the top level
-            GL_RGBA,              // Internal colour format to convert to
-                        image_flipped.cols,          // Image width  i.e. 640 for Kinect in standard mode
-                        image_flipped.rows,          // Image height i.e. 480 for Kinect in standard mode
-                        0,                   // Border width in pixels (can either be 1 or 0)
-            GL_RGB,              // Input image format (i.e. GL_RGB, GL_RGBA, GL_BGR etc.)
-            GL_UNSIGNED_BYTE,    // Image data type
-            image_flipped.ptr());        // The actual image data itself
-
-
-      // If this renders black ask McJohn what's wrong.
-      glGenerateMipmap(GL_TEXTURE_2D);
-
-      glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-      glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-      glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-      glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
-
-      GLfloat fLargest;
-      glGetFloatv( GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &fLargest );
-      glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, fLargest );
-
-      glBindTexture( GL_TEXTURE_2D, 0 );
-    }
-}
-#endif
 
 /*!
  * \brief rawImageCallback
@@ -1199,13 +1237,8 @@ void rawImageCallback(const sensor_msgs::Image::ConstPtr& raw_image_msg){
         ROS_ERROR("cv_bridge exception: %s", error.what());
         return;
     }
+    image_from_msg=cv_ptr_raw->image;
 
-#ifdef USE_VULKAN
-    /// \todo Convert to texture
-    return;
-#else
-    BindCVMat2GLTexture(cv_ptr_raw->image,textureFromImage);
-#endif
     received_image=true;
     scene_update_needed=true;
 }
@@ -1396,6 +1429,7 @@ int main(int argc, char *argv[])
     nh->getParam("scaling_factor", scaling_factor);
     nh->getParam("hud_dist", hud_dist);
     nh->getParam("hud_size", hud_size);
+    nh->getParam("sbs_image", sbs_image);
     nh->getParam("point_size", point_size);
     nh->getParam("load_robot", load_robot);
     nh->getParam("show_tf", show_tf);
