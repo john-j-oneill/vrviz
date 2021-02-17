@@ -866,8 +866,8 @@ private:
             if ( !m_pHMD->IsTrackedDeviceConnected( unTrackedDevice ) )
                 continue;
 
-            if( m_pHMD->GetTrackedDeviceClass( unTrackedDevice ) != vr::TrackedDeviceClass_Controller )
-                continue;
+            //if( m_pHMD->GetTrackedDeviceClass( unTrackedDevice ) != vr::TrackedDeviceClass_Controller )
+            //    continue;
 
             if( !m_rTrackedDevicePose[ unTrackedDevice ].bPoseIsValid )
                 continue;
@@ -878,7 +878,7 @@ private:
 
             controller_id++;
             std::stringstream ss;
-            ss << frame_prefix << "_depricated_" << controller_id;
+            ss << frame_prefix << "_depricated_" << (int) (m_pHMD->GetTrackedDeviceClass( unTrackedDevice )) << "_" << controller_id;
             /// Publish the transform of the end effector relative to the base
             tf::Transform current_trans=TfTransform(mat);
             broadcaster->sendTransform(tf::StampedTransform(current_trans, ros::Time::now(), intermediate_frame, ss.str() ));
